@@ -1,3 +1,4 @@
+from email.policy import default
 from enum import unique
 from lib2to3.pgen2.token import ERRORTOKEN
 import math
@@ -46,6 +47,18 @@ ERROR_NO_POST       = -2
 # Reply
 MAX_REPLY_GET   = 30
 
+
+#########
+# Valid #
+#########
+class Valid:
+    valid_dict = dict()
+    def __init__(self) -> None:
+        pass
+    def insert(content:str, code:int):
+        Valid.valid_dict[content] = code
+    def get_code(content):
+        return Valid.valid_dict.get(content, None)
 
 
 

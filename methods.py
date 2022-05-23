@@ -1,11 +1,14 @@
 from crypt import methods
 from os import stat
+from random import randint
 from socket import INADDR_MAX_LOCAL_GROUP
 from unittest.util import _MAX_LENGTH
 from flask import Flask, request, jsonify
+from matplotlib.pyplot import vlines
 from requests import Response
 import config
-from exts import db
+from flask_mail import Mail, Message
+from exts import mail
 from model import *
 from tokens import *
 
@@ -75,9 +78,21 @@ def user_login(username:str, passwd:str):
     return 200, jsonify({"token": f'JWT {token:s}', "message":"success"})
 
 
-def user_register(username:str, passwd:str, valid_type:str, valid_content:str):
+def request_valid_code(content:str):
+    
+    code = randint(100000, 999999)
+    Valid.insert(content, code)
+    msg = Message(f'【草莓波球论坛】新用户注册验证', sender = config.MAIL_USERNAME, recipients=[content,])
+    msg.body = f"【草莓波球论坛】欢迎注册草莓波球论坛！您的验证码为{code}, 请在5分钟内完成注册。如非本人操作请忽略此邮件。"
+    mail.send(msg)
+    return 200, id_msg(0, "success")
+
+
+def user_register(username:str, passwd:str, valid_type:str, valid_content:str, valid_code:int):
+    if Valid.get_code(valid_content) != valid_code:
+        return 400, id_msg(11, "wrong validation code")
     if type(username)!=str or len(username) > MAXLEN_USERNAME:
-        return 400, id_msg(1, f"username should be shorter than {MAXLEN_USERNAME}")
+        return 400, id_msg(10, f"username should be shorter than {MAXLEN_USERNAME}")
     ret = Users.insert(username, passwd, valid_type, valid_content)
     if ret < 0:
         if ret == ERROR_USERNAME:

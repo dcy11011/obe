@@ -3,7 +3,7 @@ import json
 from logging import makeLogRecord
 from flask import Flask, request, make_response
 import config
-from exts import db
+from exts import db, mail
 from model import *
 from methods import *
 from flask_httpauth import HTTPTokenAuth
@@ -12,6 +12,7 @@ from tokens import *
 app = Flask(__name__)
 app.config.from_object('config')
 app.app_context().push()
+mail.init_app(app)
 db.init_app(app)
 db.create_all()
 auth = HTTPTokenAuth(scheme='JWT')
@@ -31,17 +32,30 @@ def missing_element():
 def hello_world():
     return "<p>Hello! This is a flask test text.</p>"
 
+@app.route("/api/valid", methods=['GET'])
+def ValidMail():
+    mail = request.args.get('mail')
+    tel = request.args.get('tel')
+    code, data = request_valid_code(mail)
+    return make_response(data, code)
+
 @app.route("/api/register", methods=['POST'])
 def Register():
     username = request.form.get('username')
     passwd = request.form.get('passwd')
     valid_type = request.form.get('valid_type')
     valid_content = request.form.get('valid_content')
+    valid_code = request.form.get('code')
     
-    if None in [username, passwd, valid_type, valid_content]:
+    if None in [username, passwd, valid_type, valid_content, code]:
         return missing_element()
+    
+    try:
+        code = int(code)
+    except:
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
 
-    code, data = user_register(username, passwd, valid_type, valid_content)
+    code, data = user_register(username, passwd, valid_type, valid_content, valid_code)
     return make_response(data, code)
 
 
@@ -94,7 +108,7 @@ def GetUserPost():
         start = int(start)
         request_uid  = int(request_uid)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = post_get_users(request_uid, n, start)
     if(n > config.MAX_POST_REQUEST):
         data['message'] = f"max request posts limited to {config.MAX_POST_REQUEST}"
@@ -150,7 +164,7 @@ def RemovePost():
     try:
         pid = int(pid)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = post_remove(uid, pid)
     return make_response(data, code)    
 
@@ -182,7 +196,7 @@ def GetNReply():
         start = int(start)
         pid = int(pid)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = reply_get_n(pid, n,start)
     return make_response(data, code)
 
@@ -195,7 +209,7 @@ def RemoveReply():
     try:
         rid = int(rid)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = reply_remove(uid, rid)
     return make_response(data, code)
 
@@ -208,7 +222,7 @@ def AddFollow():
     try:
         target = int(target)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = follow_add(uid, target)
     return make_response(data, code)
 
@@ -221,7 +235,7 @@ def RemoveFollow():
     try:
         target = int(target)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = follow_remove(uid, target)
     return make_response(data, code)
 
@@ -233,6 +247,6 @@ def FollowList():
     try:
         target = int(target)
     except:
-        make_response(jsonify({"message":"wrong parameter"}), 400)
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = follow_get_list(uid)
     return make_response(data, code)
