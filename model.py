@@ -47,6 +47,11 @@ ERROR_NO_POST       = -2
 # Reply
 MAX_REPLY_GET   = 30
 
+# Posts query type
+POST_QUERY_NEW      = 0
+POST_QUERY_HOT      = 1
+POST_QUERY_FOLLOW   = 2
+
 
 #########
 # Valid #
@@ -198,13 +203,22 @@ class Posts(db.Model):
 
 
     @staticmethod
-    def get_n_newest(n:int, start = None) -> list:
+    def get_n_newest(uid:int, n:int, start = None, type =  POST_QUERY_NEW) -> list:
         post_list = []
         try:
-            if start is not None:
-                post_list = db.session.query(Posts).filter(Posts.pid.__le__(start)).order_by(and_(Posts.pid.desc())).limit(n).all()
-            else :
-                post_list = db.session.query(Posts).order_by(Posts.pid.desc()).limit(n).all()
+            temp = db.session.query(Posts)
+            if type == POST_QUERY_NEW:
+                if start is not None:
+                    temp = temp.filter(Posts.pid.__le__(start))
+                post_list = temp.order_by(Posts.pid.desc()).limit(n).all()
+            if type == POST_QUERY_HOT:
+                if start is not None:
+                    temp = temp.filter(Posts.pid.__le__(start))
+                post_list = temp.order_by(Posts.dianzan.desc()).limit(n).all()
+            if type == POST_QUERY_FOLLOW:
+                if start is not None:
+                    temp = temp.filter(Posts.pid.__le__(start))
+                post_list = temp.filter(Posts.uid.in_(Follow.get_list(uid))).order_by(Posts.dianzan.desc()).limit(n).all()
         except Exception as e:
             logDE(e)
             return ERROR_QUERY_DB        

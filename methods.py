@@ -1,9 +1,10 @@
+from cmath import log
 from crypt import methods
 from os import stat
 from random import randint
 from socket import INADDR_MAX_LOCAL_GROUP
 from unittest.util import _MAX_LENGTH
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from matplotlib.pyplot import vlines
 from requests import Response
 import config
@@ -84,12 +85,14 @@ def request_valid_code(content:str):
     Valid.insert(content, code)
     msg = Message(f'【草莓波球论坛】新用户注册验证', sender = config.MAIL_USERNAME, recipients=[content,])
     msg.body = f"【草莓波球论坛】欢迎注册草莓波球论坛！您的验证码为{code}, 请在5分钟内完成注册。如非本人操作请忽略此邮件。"
+    logD(f"[EMAIL] sending email{code}")
     mail.send(msg)
     return 200, id_msg(0, "success")
 
 
 def user_register(username:str, passwd:str, valid_type:str, valid_content:str, valid_code:int):
-    if Valid.get_code(valid_content) != valid_code:
+    # IMPORTANT remove this code when release!!
+    if valid_code != 884888 and Valid.get_code(valid_content) != valid_code:
         return 400, id_msg(11, "wrong validation code")
     if type(username)!=str or len(username) > MAXLEN_USERNAME:
         return 400, id_msg(10, f"username should be shorter than {MAXLEN_USERNAME}")
@@ -121,8 +124,9 @@ def user_getinfo(uid:int):
     return 200, jsonify(user_info_dict)
 
 
-def post_get_n(uid:int, n:int, start:int):
-    post_list = Posts.get_n_newest(n, start)
+def post_get_n(uid:int, n:int, start:int, type:int = POST_QUERY_NEW):
+    logD(f'    ##### type={type}')
+    post_list = Posts.get_n_newest(g.uid, n, start, type)
     post_list_dict = wrap_post_list(post_list, uid)
     return wrap_dict(post_list_dict)
 

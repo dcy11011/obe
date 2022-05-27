@@ -47,11 +47,11 @@ def Register():
     valid_content = request.form.get('valid_content')
     valid_code = request.form.get('code')
     
-    if None in [username, passwd, valid_type, valid_content, code]:
+    if None in [username, passwd, valid_type, valid_content, valid_code]:
         return missing_element()
     
     try:
-        code = int(code)
+        valid_code = int(valid_code)
     except:
         return make_response(jsonify({"message":"wrong parameter"}), 400)
 
@@ -85,13 +85,20 @@ def GetNPost():
     n = request.args.get('n', default=20)
     start = request.args.get('start')
     uid = g.uid
+    type = request.args.get('order', default='new')
+    invert_dict = {
+        'new':POST_QUERY_NEW,
+        'hot':POST_QUERY_HOT,
+        'followednew':POST_QUERY_FOLLOW,
+    }
     try:
         n = int(n)
+        type = invert_dict[type]
         if start is not None:
             start = int(start)
     except:
         return make_response(jsonify({"message":"wrong parameter"}), 400)
-    code, data = post_get_n(uid, n, start)
+    code, data = post_get_n(uid, n, start, type)
     if(n > config.MAX_POST_REQUEST):
         data['message'] = f"max request posts limited to {config.MAX_POST_REQUEST}"
     return make_response(data,code)
@@ -103,10 +110,12 @@ def GetUserPost():
     request_uid = request.args.get('uid')
     n = request.args.get('n',default=20)
     start = request.args.get('start', default=0)
+    
     try:
         n = int(n)
         start = int(start)
         request_uid  = int(request_uid)
+        
     except:
         return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = post_get_users(request_uid, n, start)
@@ -244,9 +253,5 @@ def RemoveFollow():
 @auth.login_required
 def FollowList():
     uid = g.uid
-    try:
-        target = int(target)
-    except:
-        return make_response(jsonify({"message":"wrong parameter"}), 400)
     code, data = follow_get_list(uid)
     return make_response(data, code)
