@@ -1,7 +1,7 @@
 from crypt import methods
 import json
 from logging import makeLogRecord
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, send_file
 import config
 from exts import db, mail
 from model import *
@@ -255,3 +255,25 @@ def FollowList():
     uid = g.uid
     code, data = follow_get_list(uid)
     return make_response(data, code)
+
+
+@app.route("/api/upload", methods=['POST'])
+@auth.login_required
+def Upload():
+    try:
+        file = request.files['file']
+    except Exception as e:
+        logDE(e)
+        return make_response(jsonify({"message":"ill data"}), 400)
+    code, data = file_upload(file)
+    return make_response(data, code)
+
+
+@app.route("/api/download", methods=['GET'])
+@auth.login_required
+def Download():
+    res_id = request.args.get('resid')
+    file_path = file_get_path(res_id)
+    if file_path is None:
+        make_response(404, id_msg(-1, "File not exists"))
+    return send_file(file_path, as_attachment=True)

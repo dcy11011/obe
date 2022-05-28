@@ -1,12 +1,8 @@
-from email.policy import default
-from enum import unique
-from lib2to3.pgen2.token import ERRORTOKEN
-import math
 from flask import g
 from exts import db
 from log import *
 import datetime
-from sqlalchemy import ForeignKey, false, func, and_, true
+from sqlalchemy import ForeignKey, func, and_, or_
 import uuid
 
 UUID_LEN = 40
@@ -20,10 +16,10 @@ MAXLEN_TITLE        = 40
 MAXLEN_CONTENT      = 500
 
 # Type of resources
-RES_JPG     = 1
-RES_MP4     = 2
-RES_MP3     = 3
-RES_TYPE_LIST = [RES_JPG, RES_MP4, RES_MP3]
+RES_IMG     = 10
+RES_VID     = 20
+RES_AUD     = 30
+RES_TYPE_LIST = [RES_IMG, RES_VID, RES_AUD]
 
 # Error code for insert_user
 ERROR_QUERY_DB      = -1
@@ -162,25 +158,25 @@ class Posts(db.Model):
     addtime = db.Column(db.DateTime())
     title = db.Column(db.String(MAXLEN_TITLE))
     content  = db.Column(db.String(MAXLEN_CONTENT))
-    res_id = db.Column(db.Integer)
+    res_ids = db.Column(db.String(200)) # res_ids should be a seris of ids separeted by ';' example: '01;02;3;4;556'
     res_type = db.Column(db.Integer)
     pos = db.Column(db.String(200))
     dianzan = db.Column(db.Integer)
 
-    def __init__(self, uid, title, content, res_type, res_id, pos):
+    def __init__(self, uid:int, title:str, content:str, res_type:int, res_ids:str, pos:str):
         if res_type not in RES_TYPE_LIST and res_type is not None: 
             raise Exception(f"Unsupported resource type[{res_type}]")
         self.uuid = str(uuid.uuid4())
-        self.uid, self.title, self.content, self.res_type, self.res_id, self.pos = uid, title, content, res_type, res_id, pos
+        self.uid, self.title, self.content, self.res_type, self.res_ids, self.pos = uid, title, content, res_type, res_ids, pos
         self.addtime = datetime.datetime.now()
         self.dianzan = 0
 
     
     @staticmethod
-    def insert(uid, title, content, res_type=None, res_id=None, pos=None):
+    def insert(uid, title, content, res_type=None, res_ids=None, pos=None):
         new_pid = -1
         try:
-            new_post = Posts(uid, title, content, res_type, res_id, pos)
+            new_post = Posts(uid, title, content, res_type, res_ids, pos)
             post_uuid = new_post.uuid
             db.session.add(new_post)
             db.session.commit()
@@ -475,3 +471,46 @@ class Follow(db.Model):
             logDE(e)
             return None
         return follows_list
+
+####################################
+# User Image, video and audio file #
+####################################
+# Note:
+
+class ResFile(db.Model):
+    __tablename__ = "resfile"
+    res_id = db.Column(db.Integer,  primary_key = True, autoincrement=True)
+    res_type = db.Column(db.Integer)
+    file_name = db.Column(db.String(200))
+    uuid = db.Column(db.String(UUID_LEN), unique=True)
+
+    def __init__(self, res_type, file_name):
+        self.uuid = str(uuid.uuid4())
+        self.res_type, self.file_name = res_type, file_name
+        self.root_res_id = -1
+        self.serial_id = 0
+    
+    @staticmethod
+    def insert(res_type:int, file_name:str):
+        res_id = None
+        try:
+            new_file = ResFile(res_type, file_name)
+            file_uuid = new_file.uuid
+            db.session.add(new_file)
+            db.session.commit()
+            res_id = db.session.query(ResFile).filter(ResFile.uuid == file_uuid).one().res_id
+        except Exception as e:
+            logDE(e)
+            return None
+        return res_id
+
+    @staticmethod
+    def get_filename(res_id:int):
+        try:
+            file_name = db.session.query(ResFile).filter(ResFile.res_id == res_id).one().file_name
+            return str(file_name)
+        except Exception as e:
+            logDE(e)
+            return None
+
+

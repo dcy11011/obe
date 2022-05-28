@@ -1,3 +1,4 @@
+from email.mime import base
 import os
 
 DEBUG = True
@@ -23,3 +24,22 @@ MAIL_PORT = 465
 MAIL_USERNAME = 'dcy11011@yeah.net'
 MAIL_PASSWORD = 'UYQACHVLVXIRCDIK'
 MAIL_USE_SSL = True
+
+
+# Path to save user uploaded files
+UPLOAD_PATH  = os.path.join(basedir, "userdata")
+ALLOWED_EXTENTIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'aac', 'mp3', 'wav', 'flac', 'mp4', 'mov', 'avi', 'mpeg']
+FILE_TYPE = {
+    'jpg':'IMG',
+    'jpeg':'IMG',
+    'png':'IMG',
+    'gif':'IMG',
+    'webp':'IMG',
+    'aac':'AUD',
+    'mp3':'AUD',
+    'flac':'AUD',
+    'mp4':'VID',
+    'avi':'VID',
+    'mpeg':'VID',
+}
+

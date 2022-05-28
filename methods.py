@@ -1,9 +1,7 @@
-from cmath import log
 from crypt import methods
-from os import stat
 from random import randint
-from socket import INADDR_MAX_LOCAL_GROUP
-from unittest.util import _MAX_LENGTH
+import os
+from uuid import  uuid4
 from flask import Flask, request, jsonify, g
 from matplotlib.pyplot import vlines
 from requests import Response
@@ -13,6 +11,9 @@ from exts import mail
 from model import *
 from tokens import *
 
+
+def rand_filename():
+    return str(uuid4())
 
 def id_msg(id, message = ""):
     return jsonify({"id":id, "message":message})
@@ -34,7 +35,7 @@ def wrap_post(post: Posts, uid = None) -> dict:
         "nreply" : replycount,
         "dianzan":post.dianzan,
         "restype":post.res_type,
-        "resid":post.res_id,
+        "resids":post.res_ids,
         "datetime":post.addtime,
         "username":userinfo.name,
         "userimgid" : userinfo.img_res_id,
@@ -147,14 +148,14 @@ def post_get_users(uid, n, start):
 
 
 
-def post_add(uid, title, content, res_type, res_content, pos):
+def post_add(uid, title, content, res_type, res_ids, pos):
     if type(title) != str or len(title) > MAXLEN_TITLE or len(title) <=0:
         return 400, id_msg(2, f"request title format error(should be string shorter than {MAXLEN_TITLE})")
     if type(content) != str or len(content) > MAXLEN_CONTENT or len(content) <=0:
         return 400, id_msg(3, f"request content format error(should be string shorter than {MAXLEN_CONTENT})")
     if res_type not in RES_TYPE_LIST and res_type is not None:
         return 400, id_msg(4, f"request resource file type invalid")
-    new_pid = Posts.insert(uid, title, content, res_type, res_content, pos) # FIX THIS WHEN ADDING RES TABLE
+    new_pid = Posts.insert(uid, title, content, res_type, res_ids, pos) # FIX THIS WHEN ADDING RES TABLE
     if new_pid<0:
         return 500, id_msg(-1, "inserting failed")
     return 200, jsonify({"pid":new_pid, "message":"success"})
@@ -198,7 +199,7 @@ def reply_get_n(pid, n, start):
             "rid" : reply.rid,
             "content" : reply.content,
             "restype" : reply.res_type,
-            "resid" : reply.res_id,
+            "resids" : reply.res_id,
             "username" : userinfo.name,
             "userimgid" : userinfo.img_res_id,
             "pos":reply.pos,
@@ -267,3 +268,49 @@ def follow_get_list(follower):
         'id':0,
         'message':'success',
     })
+
+def file_upload(file):
+    filename = str(file.filename)
+    suffix = filename.split('.')[-1].lower()
+    if suffix not in config.ALLOWED_EXTENTIONS:
+        return 400, jsonify({
+            'id' : -1,
+            'message' : 'file extention name not allowed',
+        })
+    new_filename = f'{rand_filename():s}.{suffix:s}'
+    save_dir = config.UPLOAD_PATH
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    save_path = os.path.join(save_dir, new_filename)
+    try:
+        file.save(save_path)
+    except Exception as e:
+        logDE(e)
+        return 500, id_msg(-1, "server failed to save file")
+    res_id = -1
+    try:
+        type_table = {
+            'IMG':RES_IMG,
+            'AUD':RES_AUD,
+            'VID':RES_VID,
+        }
+        res_id = ResFile.insert(type_table[config.FILE_TYPE[suffix]], new_filename)
+    except Exception as e:
+        logDE(e)
+        return 500, id_msg(-1, "suffix resolving failed")
+    if res_id is None:
+        return 500, id_msg(-1, "Database inserting error")
+    return 200, jsonify({
+        'id':0,
+        'message':'success',
+        'resid':res_id
+    })
+
+def file_get_path(res_id:int):
+    file_name = ResFile.get_filename(res_id)
+    if file_name is None:
+        return None
+    file_path = os.path.join(config.UPLOAD_PATH, file_name)
+    if os.path.exists(file_path):
+        return file_path
+    return None
