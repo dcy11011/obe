@@ -38,7 +38,7 @@ def wrap_post(post: Posts, uid = None) -> dict:
         "resids":post.res_ids,
         "datetime":post.addtime,
         "username":userinfo.name,
-        "userimgid" : userinfo.img_res_id,
+        "userprofileid" : userinfo.profile_res_id,
     }
     if uid is not None:
         if_zan = Dianzans.get(uid, post.pid)
@@ -119,10 +119,17 @@ def user_getinfo(uid:int):
         'sig'       : usr.sig,
         'mail'      : usr.mail,
         'tel'       : usr.tel,
-        'imgid'    : usr.img_res_id,
+        'imgid'    : usr.profile_res_id,
         'message'   : "success"
     }
     return 200, jsonify(user_info_dict)
+
+
+def user_set_profile(uid:int, res_id:int):
+    ret = Users.update_profile(uid, res_id)
+    if not ret:
+        return 500, id_msg(-1, "server internal error, maybe request res_id invalid")
+    return 200, id_msg(0, "success")
 
 
 def post_get_n(uid:int, n:int, start:int, type:int = POST_QUERY_NEW):
@@ -201,7 +208,7 @@ def reply_get_n(pid, n, start):
             "restype" : reply.res_type,
             "resids" : reply.res_id,
             "username" : userinfo.name,
-            "userimgid" : userinfo.img_res_id,
+            "userprofileid" : userinfo.profile_res_id,
             "pos":reply.pos,
             "datetime":reply.addtime,
         })
@@ -269,6 +276,7 @@ def follow_get_list(follower):
         'message':'success',
     })
 
+
 def file_upload(file):
     filename = str(file.filename)
     suffix = filename.split('.')[-1].lower()
@@ -305,6 +313,7 @@ def file_upload(file):
         'message':'success',
         'resid':res_id
     })
+
 
 def file_get_path(res_id:int):
     file_name = ResFile.get_filename(res_id)

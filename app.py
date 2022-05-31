@@ -79,6 +79,19 @@ def UserInfo():
     return make_response(data, code)
 
 
+@app.route("/api/setprofile", methods = ['GET'])
+@auth.login_required
+def SetProfile():
+    uid = g.uid
+    res_id = request.args.get('resid')
+    try:
+        res_id = int(res_id)
+    except:
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
+    code, data = user_set_profile(uid, res_id)
+    return make_response(data, code)
+
+
 @app.route("/api/getpost", methods=['GET'])
 @auth.login_required
 def GetNPost():
@@ -275,5 +288,5 @@ def Download():
     res_id = request.args.get('resid')
     file_path = file_get_path(res_id)
     if file_path is None:
-        make_response(404, id_msg(-1, "File not exists"))
-    return send_file(file_path, as_attachment=True)
+        make_response(id_msg(-1, "File not exists"), 404)
+    return send_file(file_path, as_attachment=True, max_age = 691200)

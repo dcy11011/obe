@@ -74,7 +74,7 @@ class Users(db.Model):
     sig = db.Column(db.String(MAXLEN_USERSIG))
     mail = db.Column(db.String(100), unique=True)
     tel = db.Column(db.String(20), unique=True)
-    img_res_id = db.Column(db.Integer)
+    profile_res_id = db.Column(db.Integer, db.ForeignKey('resfile.res_id', ondelete='SET NULL'))
     md5_passwd = db.Column(db.String(250))
     addtime = db.Column(db.DateTime())
 
@@ -82,7 +82,7 @@ class Users(db.Model):
         self.uid = None
         self.uuid = str(uuid.uuid4())
         self.name, self.mail, self.tel, self.md5_passwd = name, mail, tel, md5_passwd
-        self.sig, self.img_res_id = None, None
+        self.sig, self.profile_res_id = None, None
         self.addtime = datetime.datetime.now()
 
 
@@ -144,6 +144,17 @@ class Users(db.Model):
         if usr.md5_passwd != passwd:
             return ERROR_PASSWD
         return usr.uid
+
+    
+    @staticmethod
+    def update_profile(uid:int, res_id:int) -> bool:
+        try:
+            db.session.query(Users).filter(Users.uid == uid).update({'profile_res_id':res_id})
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
 
 
 
