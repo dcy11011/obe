@@ -23,8 +23,20 @@ def wrap_post(post: Posts, uid = None) -> dict:
     userinfo = Users.get_by_id(post.uid)
     if type(userinfo) is not Users:
         userinfo = Users("已注销用户","","","")
-    replycount = Replies.count_by_pid(post.pid)
-    if(replycount < 0 ):
+    replycount = Replies.count_by_pid(uid, post.pid)
+    DIANZAN_GET = 16
+    dianzan_list = Dianzans.get_by_post(post.pid, DIANZAN_GET)
+    dianzaner_str = ""
+    for i in range(0, min(DIANZAN_GET - 1, len(dianzan_list))):
+        if i != 0 :
+            dianzaner_str += ", "
+        dianzaner_str += str(Users.get_by_id(dianzan_list[i]).name)
+    logD(dianzaner_str)
+    if len(dianzan_list)>=DIANZAN_GET:
+        dianzaner_str += f", ...等{post.dianzan}人赞了"
+    else:
+        dianzaner_str += f"共{post.dianzan}人赞了"
+    if replycount < 0 :
         return None
     ret_list = {
         "pid":post.pid,
@@ -34,13 +46,14 @@ def wrap_post(post: Posts, uid = None) -> dict:
         "pos":post.pos,
         "nreply" : replycount,
         "dianzan":post.dianzan,
+        "dianzandetail":dianzaner_str,
         "restype":post.res_type,
         "resids":post.res_ids,
         "datetime":post.addtime,
         "username":userinfo.name,
         "userprofileid" : userinfo.profile_res_id,
     }
-    if uid is not None:
+    if (uid is not None) and (uid >= 0):
         if_zan = Dianzans.get(uid, post.pid)
         ret_list['if_zan'] = if_zan
     return ret_list
@@ -77,7 +90,7 @@ def user_login(username:str, passwd:str):
     if uid < 0:
         return 400, id_msg(-1, "login failed")
     token  = generate_token(uid)
-    return 200, jsonify({"token": f'JWT {token:s}', "message":"success"})
+    return 200, jsonify({"token": f'JWT {token:s}', 'uid':uid, "message":"success"})
 
 
 def request_valid_code(content:str):
@@ -95,7 +108,7 @@ def user_register(username:str, passwd:str, valid_type:str, valid_content:str, v
     # IMPORTANT remove this code when release!!
     if valid_code != 884888 and Valid.get_code(valid_content) != valid_code:
         return 400, id_msg(11, "wrong validation code")
-    if type(username)!=str or len(username) > MAXLEN_USERNAME:
+    if type(username)!=str or len(username) > MAXLEN_USERNAME or len(username) < MINLEN_USERNAME:
         return 400, id_msg(10, f"username should be shorter than {MAXLEN_USERNAME}")
     ret = Users.insert(username, passwd, valid_type, valid_content)
     if ret < 0:
@@ -119,10 +132,24 @@ def user_getinfo(uid:int):
         'sig'       : usr.sig,
         'mail'      : usr.mail,
         'tel'       : usr.tel,
-        'imgid'    : usr.profile_res_id,
+        'profileid'    : usr.profile_res_id,
         'message'   : "success"
     }
     return 200, jsonify(user_info_dict)
+
+
+def user_set_info(uid:int, username:str, sig:str, res_id:int):
+    if type(username)!=str or len(username) > MAXLEN_USERNAME or len(username) < MINLEN_USERNAME:
+        return 400, id_msg(1, f"username should be shorter than {MAXLEN_USERNAME} and longer than {MINLEN_USERNAME}")
+    if type(sig)!=str or len(sig)>MAXLEN_USERSIG:
+        return 400, id_msg(2, f"signature should be shorter than {MAXLEN_USERSIG}")
+    try:
+        assert(Users.update_username(uid, username))
+        assert(Users.update_sig(uid, sig))
+        assert(Users.update_profile(uid, res_id))
+    except:
+        return 500, id_msg(-1, "server internal error, maybe request is invalid")
+    return 200, id_msg(0, "success")
 
 
 def user_set_profile(uid:int, res_id:int):
@@ -132,9 +159,61 @@ def user_set_profile(uid:int, res_id:int):
     return 200, id_msg(0, "success")
 
 
-def post_get_n(uid:int, n:int, start:int, type:int = POST_QUERY_NEW):
-    logD(f'    ##### type={type}')
-    post_list = Posts.get_n_newest(g.uid, n, start, type)
+def user_change_passwd(uid:int, old:str, new:str):
+    code  = Users.update_passwd(uid, old, new)
+    if code == ERROR_VARIFY_FAILED:
+        return 400, id_msg(1, "password worong")
+    if code == CHANGE_PASSWD_SUCCESS:
+        return 200, id_msg(0, "success")
+    return 500, id_msg(2, "server error")
+
+
+def user_ban(uid, ban_uid):
+    if None in [Users.get_by_id(uid), Users.get_by_id(ban_uid)]:
+        return 404, id_msg(-2, "Users not found")
+    status = Ban.add(uid, ban_uid)
+    if not status:
+        return 500, id_msg(-1, "server internal error")
+    return 200, id_msg(0, "success")
+
+
+def user_unban(uid, ban_uid):
+    if None in [Users.get_by_id(uid), Users.get_by_id(ban_uid)]:
+        return 404, id_msg(-2, "Users not found")
+    status = Follow.remove(uid, ban_uid)
+    if not status:
+        return 500, id_msg(-1, "server internal error")
+    return 200, id_msg(0, "success")
+
+
+def user_ban_list(uid):
+    if Users.get_by_id(uid) is None:
+        return 404, id_msg(-2, "No such user")
+    ban_list = Ban.get_list(uid)
+    if ban_list is None:
+        return 500, id_msg(-1, "server internal error")
+    
+    info_list = []
+    for uid in ban_list:
+        user_info = Users.get_by_id(uid)
+        if user_info is None:
+            return 500, id_msg(-1, "server internal error")
+        info_list.append({
+            "uid" : uid,
+            "username" : user_info.name,
+            'imgid'    : user_info.profile_res_id,
+        })
+        
+    return 200, jsonify({
+        'list':info_list,
+        'id':0,
+        'message':'success',
+    })
+
+
+
+def post_get_n(uid:int, n:int, start:int, type_order:int = POST_ORDER_NEW, type_filter = POST_FILTER_NONE):
+    post_list = Posts.get_n_newest(g.uid, n, start, type_order, type_filter)
     post_list_dict = wrap_post_list(post_list, uid)
     return wrap_dict(post_list_dict)
 
@@ -160,21 +239,59 @@ def post_add(uid, title, content, res_type, res_ids, pos):
         return 400, id_msg(2, f"request title format error(should be string shorter than {MAXLEN_TITLE})")
     if type(content) != str or len(content) > MAXLEN_CONTENT or len(content) <=0:
         return 400, id_msg(3, f"request content format error(should be string shorter than {MAXLEN_CONTENT})")
-    if res_type not in RES_TYPE_LIST and res_type is not None:
-        return 400, id_msg(4, f"request resource file type invalid")
+    if (res_type not in RES_TYPE_LIST) and (res_type is not None):
+        return 400, id_msg(4, f"request resource file type {res_type} invalid")
     new_pid = Posts.insert(uid, title, content, res_type, res_ids, pos) # FIX THIS WHEN ADDING RES TABLE
     if new_pid<0:
         return 500, id_msg(-1, "inserting failed")
     return 200, jsonify({"pid":new_pid, "message":"success"})
     
 
-def post_dianzan(uid, pid):
-    ret = Posts.zan(uid, pid)
+
+def wrap_dianzan(pid:int, uid:int):
+    post = Posts.get(pid)
+    DIANZAN_GET = 16
+    dianzan_list = Dianzans.get_by_post(post.pid, DIANZAN_GET)
+    dianzaner_str = ""
+    for i in range(0, min(DIANZAN_GET - 1, len(dianzan_list))):
+        if i != 0 :
+            dianzaner_str += ", "
+        dianzaner_str += str(Users.get_by_id(dianzan_list[i]).name)
+    logD(dianzaner_str)
+    if len(dianzan_list)>=DIANZAN_GET:
+        dianzaner_str += f", ...等{post.dianzan}人赞了"
+    else:
+        dianzaner_str += f"共{post.dianzan}人赞了"
+    ret_list = {
+        "pid":pid,
+        "dianzan":post.dianzan,
+        "dianzandetail":dianzaner_str
+    }
+    if (uid is not None) and (uid >= 0):
+        if_zan = Dianzans.get(uid, pid)
+        ret_list['if_zan'] = if_zan
+    return ret_list
+
+def get_dianzan(uid, pid):
+    ret = wrap_dianzan(pid, uid)
     if type(ret) is TYPE_ERROR_QUERY:
         if ret == ERROR_NO_POST:
             return 404, id_msg(-1, "request post not found")
         return 500, id_msg(-1, "server internal error")
-    return 200, jsonify({"ifzan":ret, "message":"success"})
+    ret['message'] = 'success'
+    return 200, jsonify(ret)
+
+
+def post_dianzan(uid, pid, flag):
+    ret = Posts.zan(uid, pid, flag)
+    ret2 = wrap_dianzan(pid, uid)
+    logD(f"pid={pid} uid={uid}")
+    if type(ret) is TYPE_ERROR_QUERY:
+        if ret == ERROR_NO_POST:
+            return 404, id_msg(-1, "request post not found")
+        return 500, id_msg(-1, "server internal error")
+    ret2['message'] = 'success'
+    return 200, jsonify(ret2)
 
 
 def post_remove(uid, pid):
@@ -188,8 +305,8 @@ def post_remove(uid, pid):
     return 200, id_msg(0, "success")    
 
 
-def reply_get_n(pid, n, start):
-    reply_list = Replies.get_by_pid(pid,n,start)
+def reply_get_n(uid, pid, n, start):
+    reply_list = Replies.get_by_pid(uid, pid,n,start)
     if type(reply_list) is TYPE_ERROR_QUERY:
         if reply_list == ERROR_NO_POST:
             return 404, id_msg(-1, "request post not found")
@@ -206,7 +323,7 @@ def reply_get_n(pid, n, start):
             "rid" : reply.rid,
             "content" : reply.content,
             "restype" : reply.res_type,
-            "resids" : reply.res_id,
+            "resids" : reply.res_ids,
             "username" : userinfo.name,
             "userprofileid" : userinfo.profile_res_id,
             "pos":reply.pos,
@@ -248,7 +365,7 @@ def reply_remove(uid, rid):
 
 def follow_add(follower, follows):
     if None in [Users.get_by_id(follower), Users.get_by_id(follows)]:
-        return 404, id_msg(-2, "One or more users not found")
+        return 404, id_msg(-2, "Users not found")
     status = Follow.add(follower, follows)
     if not status:
         return 500, id_msg(-1, "server internal error")
@@ -257,7 +374,7 @@ def follow_add(follower, follows):
 
 def follow_remove(follower, follows):
     if None in [Users.get_by_id(follower), Users.get_by_id(follows)]:
-        return 404, id_msg(-2, "One or more users not found")
+        return 404, id_msg(-2, "Users not found")
     status = Follow.remove(follower, follows)
     if not status:
         return 500, id_msg(-1, "server internal error")

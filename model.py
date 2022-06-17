@@ -9,6 +9,7 @@ UUID_LEN = 40
 
 
 MAXLEN_USERNAME     = 12
+MINLEN_USERNAME     = 2
 MAXLEN_USERSIG      = 40
 MAXLEN_PASSWD       = 18
 MAXLEN_MAIL         = 50
@@ -44,9 +45,16 @@ ERROR_NO_POST       = -2
 MAX_REPLY_GET   = 30
 
 # Posts query type
-POST_QUERY_NEW      = 0
-POST_QUERY_HOT      = 1
-POST_QUERY_FOLLOW   = 2
+POST_ORDER_NEW      = 0
+POST_ORDER_HOT      = 1
+POST_FILTER_NONE    = -1
+POST_FILTER_FOLLOW  = -2
+
+
+# Error code change passwd
+ERROR_OTHER = 2
+ERROR_VARIFY_FAILED = 1
+CHANGE_PASSWD_SUCCESS = 0
 
 
 #########
@@ -156,6 +164,40 @@ class Users(db.Model):
             return False
         return True
 
+    @staticmethod
+    def update_username(uid:int, username:str) ->bool:
+        try:
+            db.session.query(Users).filter(Users.uid == uid).update({'name':username})
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
+    
+    @staticmethod
+    def update_sig(uid:int, sig:str) ->bool:
+        try:
+            db.session.query(Users).filter(Users.uid == uid).update({'sig':sig})
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
+
+    @staticmethod
+    def update_passwd(uid:int, old_passwd:str, new_passwd:str) -> int:
+        try:
+            db_old = db.session.query(Users.md5_passwd).filter(Users.uid == uid).first()[0]
+            print(db_old, old_passwd)
+            if db_old != old_passwd:
+                return ERROR_VARIFY_FAILED
+            db.session.query(Users).filter(Users.uid == uid).update({'md5_passwd':new_passwd})
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return ERROR_OTHER
+        return CHANGE_PASSWD_SUCCESS
+
 
 
 ##############
@@ -199,10 +241,11 @@ class Posts(db.Model):
 
 
     @staticmethod
-    def get_max_pid():
+    def get_max_pid(uid:int = -1):
         pid = 0
         try:
-            pid = int(db.session.query(func.max(Posts.pid)).one()[0])
+            ban_list = Ban.get_list(uid)
+            pid = int(db.session.query(func.max(Posts.pid)).filter(Posts.pid.notin_(ban_list)).one()[0])
         except Exception as e:
             logDE(e)
             return -1
@@ -210,22 +253,27 @@ class Posts(db.Model):
 
 
     @staticmethod
-    def get_n_newest(uid:int, n:int, start = None, type =  POST_QUERY_NEW) -> list:
+    def get_n_newest(uid:int, n:int, start = None, type_order =  POST_ORDER_NEW, type_filter = None) -> list:
         post_list = []
         try:
-            temp = db.session.query(Posts)
-            if type == POST_QUERY_NEW:
-                if start is not None:
-                    temp = temp.filter(Posts.pid.__le__(start))
-                post_list = temp.order_by(Posts.pid.desc()).limit(n).all()
-            if type == POST_QUERY_HOT:
-                if start is not None:
-                    temp = temp.filter(Posts.pid.__le__(start))
-                post_list = temp.order_by(Posts.dianzan.desc()).limit(n).all()
-            if type == POST_QUERY_FOLLOW:
-                if start is not None:
-                    temp = temp.filter(Posts.pid.__le__(start))
-                post_list = temp.filter(Posts.uid.in_(Follow.get_list(uid))).order_by(Posts.dianzan.desc()).limit(n).all()
+            ban_list = Ban.get_list(uid)
+            temp = db.session.query(Posts).filter(Posts.uid.notin_(ban_list))
+            if start is not None:
+                temp = temp.filter(Posts.pid.__le__(start))
+
+            if type_order == POST_ORDER_NEW:
+                temp = temp.order_by(Posts.pid.desc())
+
+            if type_order == POST_ORDER_HOT:
+                temp = temp.order_by(Posts.dianzan.desc())
+
+            if type_filter == POST_FILTER_FOLLOW:
+                temp = temp.filter(Posts.uid.in_(Follow.get_list(uid)))
+
+            if type_filter >= 0:
+                temp = temp.filter(Posts.uid == type_filter)
+            
+            post_list = temp.limit(n).all()
         except Exception as e:
             logDE(e)
             return ERROR_QUERY_DB        
@@ -253,18 +301,20 @@ class Posts(db.Model):
 
     
     @staticmethod
-    def zan(uid:int, pid:int) -> bool:
+    def zan(uid:int, pid:int, flag:int) -> bool:
         if Posts.get(pid) is None:
             return ERROR_NO_POST
         if_zaned = Dianzans.get(uid,pid)
         try:
             n_zan = db.session.query(Posts).filter(Posts.pid == pid).one().dianzan
-            if if_zaned:
+            if if_zaned and flag == 0:
                 n_zan -= 1
                 Dianzans.remove(uid, pid)
-            else:
+                if_zaned = False
+            elif not if_zaned and flag == 1:
                 n_zan += 1
                 Dianzans.add(uid, pid)
+                if_zaned = True
             
             db.session.query(Posts).filter(Posts.pid == pid).update({"dianzan":n_zan})
             db.session.commit()
@@ -272,7 +322,7 @@ class Posts(db.Model):
             logDE(e)
             return ERROR_QUERY_DB
         
-        return not if_zaned
+        return if_zaned
 
 
     @staticmethod 
@@ -305,23 +355,24 @@ class Replies(db.Model):
     uuid = db.Column(db.String(UUID_LEN), unique=True)
     addtime = db.Column(db.DateTime())
     content  = db.Column(db.String(MAXLEN_CONTENT))
-    res_id = db.Column(db.Integer)
+    res_ids = db.Column(db.String(200)) # res_ids should be a seris of ids separeted by ';' example: '01;02;3;4;556'
     res_type = db.Column(db.Integer)
     pos = db.Column(db.String(200))
 
-    def __init__(self, uid, pid, content, res_type=None, res_id=None, pos=None):
+    def __init__(self, uid, pid, content, res_type=None, res_ids=None, pos=None):
         if res_type not in RES_TYPE_LIST and res_type is not None: 
             raise Exception(f"Unsupported resource type[{res_type}]")
         self.uuid = str(uuid.uuid4())
-        self.uid, self.pid, self.content, self.res_type, self.res_id, self.pos = uid, pid, content, res_type, res_id, pos
+        self.uid, self.pid, self.content, self.res_type, self.res_ids, self.pos = uid, pid, content, res_type, res_ids, pos
         self.addtime = datetime.datetime.now()
 
 
     @staticmethod
-    def get_max_rid(pid):
+    def get_max_rid(uid, pid):
         max_rid = 0
         try:
-            max_rid = int(db.session.query(func.max(Replies.pid)).one()[0])
+            ban_list = Ban.get_list(uid)
+            max_rid = int(db.session.query(func.max(Replies.rid)).filter(and_(Replies.pid == pid, Replies.uid.notin_(ban_list))).one()[0])
         except Exception as e:
             logDE(e)
             return -1        
@@ -329,14 +380,15 @@ class Replies(db.Model):
 
 
     @staticmethod
-    def get_by_pid(pid:int, n:int = 20, start = None):
+    def get_by_pid(uid:int, pid:int, n:int = 20, start = None):
         if Posts.get(pid) is None:
             return ERROR_NO_POST
         reply_list = []
         try:
+            ban_list = Ban.get_list(uid)
             if start is None:
                 start = 0
-            reply_list = db.session.query(Replies).filter(and_(Replies.pid == pid, Replies.rid.__ge__(start))).limit(n)
+            reply_list = db.session.query(Replies).filter(and_(Replies.pid == pid, Replies.rid.__ge__(start), Replies.uid.notin_(ban_list))).limit(n)
         except Exception as e:
             logDE(e)
             return ERROR_QUERY_DB        
@@ -344,12 +396,12 @@ class Replies(db.Model):
 
     
     @staticmethod
-    def insert(uid, pid, content, res_type = None, res_id = None, pos = None):
+    def insert(uid, pid, content, res_type = None, res_ids = None, pos = None):
         if Posts.get(pid) is None:
             return ERROR_NO_POST
         new_rid = -1
         try:
-            new_reply = Replies(uid, pid, content, res_type, res_id, pos)
+            new_reply = Replies(uid, pid, content, res_type, res_ids, pos)
             reply_uuid = new_reply.uuid
             db.session.add(new_reply)
             db.session.commit()
@@ -361,12 +413,13 @@ class Replies(db.Model):
 
 
     @staticmethod
-    def count_by_pid(pid):
+    def count_by_pid(uid, pid):
         if Posts.get(pid) is None:
             return ERROR_NO_POST
         n_reply = 0
         try:
-            n_reply = int(db.session.query(func.count(Replies.rid)).filter(Replies.pid == pid).one()[0])
+            ban_list = Ban.get_list(uid)
+            n_reply = int(db.session.query(func.count(Replies.rid)).filter(and_(Replies.pid == pid, Replies.uid.notin_(ban_list))).one()[0])
         except Exception as e:
             logDE(e)
             return -1
@@ -395,12 +448,13 @@ class Replies(db.Model):
 ############
 class Dianzans(db.Model):
     __tablename__ = "dianzans"
-    uid = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
-    pid = db.Column(db.Integer, db.ForeignKey('posts.pid', ondelete='CASCADE'), primary_key = True)
+    zanid = db.Column(db.Integer, primary_key = True, autoincrement=True)
+    uid = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'))
+    pid = db.Column(db.Integer, db.ForeignKey('posts.pid', ondelete='CASCADE'))
+    
 
     def __init__(self, uid, pid):
         self.uid, self.pid = uid, pid
-
 
     @staticmethod
     def add(uid, pid) -> bool:
@@ -436,6 +490,16 @@ class Dianzans(db.Model):
             logDE(e)
             return False
 
+    @staticmethod
+    def get_by_post(pid:int, n:int):
+        dianzan_list = []
+        try:
+            dianzan_list = db.session.query(Dianzans).filter(Dianzans.pid == pid).order_by(Dianzans.zanid.desc()).limit(n).all()
+            dianzan_list = [ _.uid for _ in dianzan_list]
+        except Exception as e:
+            logDE(e)
+            return []
+        return dianzan_list
 
 
 ###########
@@ -486,7 +550,7 @@ class Follow(db.Model):
 ####################################
 # User Image, video and audio file #
 ####################################
-# Note:
+# Note: 
 
 class ResFile(db.Model):
     __tablename__ = "resfile"
@@ -524,4 +588,69 @@ class ResFile(db.Model):
             logDE(e)
             return None
 
+
+#######
+# Ban #
+#######
+class Ban(db.Model):
+    __tablename__ = "ban"
+    user = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
+    dontlook  = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
+
+    def __init__(self, user, dontlook):
+        self.follower, self.dontlook = user, dontlook
+
+    @staticmethod
+    def add(user:int, dontlook:int) -> bool:
+        try:
+            follow = Ban(user,dontlook)
+            db.session.add(follow)
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
+
+
+    @staticmethod
+    def remove(user:int, dontlook:int):
+        try:
+            db.session.query(Ban).filter(and_(Ban.user == user, Ban.dontlook == dontlook)).delete()
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
+
+
+    @staticmethod
+    def get_list(user:int):
+        ban_list = []
+        if(user < 0): return ban_list
+        try:
+            ret = db.session.query(Ban).filter(and_(Ban.user == user)).all()
+            ban_list = [r.follows for r in ret]
+        except Exception as e:
+            logDE(e)
+            return None
+        return ban_list
+
+
+###########
+# Message #
+###########
+class Message(db.Model):
+    __tablename__ = "message"
+    reciever = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
+    sender = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
+    title = db.Column(db.String(80))
+    abstract = db.Column(db.String(80))
+    linkID = db.Column(db.Integer)
+    read = db.Column(db.Boolean)
+
+    def __init__(self, reciever, sender, title, abstract, linkedID):
+        self.reciever, self.sender, self.title, self.abstract, self.linkID = reciever, sender, title, abstract, linkedID
+        self.read = False
+
+    
 
