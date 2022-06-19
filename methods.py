@@ -5,8 +5,9 @@ from uuid import  uuid4
 from flask import Flask, request, jsonify, g
 from matplotlib.pyplot import vlines
 from requests import Response
+from sqlalchemy import null
 import config
-from flask_mail import Mail, Message
+import flask_mail
 from exts import mail
 from model import *
 from tokens import *
@@ -49,9 +50,10 @@ def wrap_post(post: Posts, uid = None) -> dict:
         "dianzandetail":dianzaner_str,
         "restype":post.res_type,
         "resids":post.res_ids,
-        "datetime":post.addtime,
+        "datetime":post.addtime.strftime("%Y-%m-%d %H:%M:%S"),
         "username":userinfo.name,
         "userprofileid" : userinfo.profile_res_id,
+        "followed":Follow.get(uid, post.uid),
     }
     if (uid is not None) and (uid >= 0):
         if_zan = Dianzans.get(uid, post.pid)
@@ -85,6 +87,38 @@ def wrap_dict(data:dict)->tuple:
     return 200, jsonify(data)
 
 
+def message_dianzan(uid_sender:int, pid:int):
+    user = Users.get_by_id(uid_sender)
+    if user is None: return
+    post = Posts.get(pid)
+    if post is None: return
+    title = f"{user.name:s}点赞了您的帖子#{pid:d}"
+    content = ""
+    Message.add(post.uid, uid_sender, title, content, pid)
+
+def message_reply(uid_sender:int, pid:int, content:str):
+    user = Users.get_by_id(uid_sender)
+    if user is None: return
+    post = Posts.get(pid)
+    if post is None: return
+    title = f"{user.name:s}回复了您的帖子#{pid:d}"
+    if len(content)>30:
+        content = content[:30]+"..."
+    Message.add(post.uid, uid_sender, title, content, pid)
+
+def message_new_post(uid_sender:int, pid:int, content:str):
+    user = Users.get_by_id(uid_sender)
+    if user is None: return
+    post = Posts.get(pid)
+    if post is None: return
+    title = f"您关注的{user.name:s}发布了新帖子#{pid:d}"
+    if len(content)>30:
+        content = content[:30]+"..."
+    follower_list = Follow.get_follower_list(uid_sender)
+    for follower in follower_list:
+        Message.add(follower, uid_sender, title, content, pid)
+
+
 def user_login(username:str, passwd:str):
     uid = Users.get_by_login(username, passwd)
     if uid < 0:
@@ -97,7 +131,7 @@ def request_valid_code(content:str):
     
     code = randint(100000, 999999)
     Valid.insert(content, code)
-    msg = Message(f'【草莓波球论坛】新用户注册验证', sender = config.MAIL_USERNAME, recipients=[content,])
+    msg = flask_mail.Message(f'【草莓波球论坛】新用户注册验证', sender = config.MAIL_USERNAME, recipients=[content,])
     msg.body = f"【草莓波球论坛】欢迎注册草莓波球论坛！您的验证码为{code}, 请在5分钟内完成注册。如非本人操作请忽略此邮件。"
     logD(f"[EMAIL] sending email{code}")
     mail.send(msg)
@@ -133,6 +167,7 @@ def user_getinfo(uid:int):
         'mail'      : usr.mail,
         'tel'       : usr.tel,
         'profileid'    : usr.profile_res_id,
+        "followed": Follow.get(g.uid, uid),
         'message'   : "success"
     }
     return 200, jsonify(user_info_dict)
@@ -174,13 +209,13 @@ def user_ban(uid, ban_uid):
     status = Ban.add(uid, ban_uid)
     if not status:
         return 500, id_msg(-1, "server internal error")
-    return 200, id_msg(0, "success")
+    return 200, id_msg(1, "success")
 
 
 def user_unban(uid, ban_uid):
     if None in [Users.get_by_id(uid), Users.get_by_id(ban_uid)]:
         return 404, id_msg(-2, "Users not found")
-    status = Follow.remove(uid, ban_uid)
+    status = Ban.remove(uid, ban_uid)
     if not status:
         return 500, id_msg(-1, "server internal error")
     return 200, id_msg(0, "success")
@@ -221,7 +256,7 @@ def post_get_n(uid:int, n:int, start:int, type_order:int = POST_ORDER_NEW, type_
 def post_get_detail(uid:int, pid:int):
     post = Posts.get(pid)
     if type(post) is not Posts:
-        return 400, id_msg(-1, f"request post not found")
+        return 404, id_msg(-1, f"request post not found")
     
     return wrap_dict(wrap_post(post, uid))
     
@@ -233,6 +268,22 @@ def post_get_users(uid, n, start):
     return wrap_dict(post_list_dict)
 
 
+def post_search(uid, main_pattern, title_pattern, content_pattern, user_pattern, res_type_list):
+    user_list = None 
+    if user_pattern is not None:
+        user_list = Users.search(uid, user_pattern)
+
+    if type(user_list) is int:
+        return 500, id_msg(1, "Failed to get userlist")
+    
+    if res_type_list is not None:
+        for res_type in res_type_list:
+            if (res_type is not None) and (res_type not in RES_TYPE_LIST):
+                return 400, id_msg(2, "restype invalid")
+
+    post_list = Posts.search(uid, main_pattern, title_pattern, content_pattern, user_list, res_type_list)
+    post_list_dict = wrap_post_list(post_list, uid)
+    return wrap_dict(post_list_dict)
 
 def post_add(uid, title, content, res_type, res_ids, pos):
     if type(title) != str or len(title) > MAXLEN_TITLE or len(title) <=0:
@@ -244,6 +295,7 @@ def post_add(uid, title, content, res_type, res_ids, pos):
     new_pid = Posts.insert(uid, title, content, res_type, res_ids, pos) # FIX THIS WHEN ADDING RES TABLE
     if new_pid<0:
         return 500, id_msg(-1, "inserting failed")
+    message_new_post(uid, new_pid, title+" "+content)
     return 200, jsonify({"pid":new_pid, "message":"success"})
     
 
@@ -291,6 +343,7 @@ def post_dianzan(uid, pid, flag):
             return 404, id_msg(-1, "request post not found")
         return 500, id_msg(-1, "server internal error")
     ret2['message'] = 'success'
+    message_dianzan(uid, pid)
     return 200, jsonify(ret2)
 
 
@@ -321,13 +374,15 @@ def reply_get_n(uid, pid, n, start):
         ret_list.append({
             "pid" : reply.pid,
             "rid" : reply.rid,
+            "uid" : reply.uid,
             "content" : reply.content,
             "restype" : reply.res_type,
             "resids" : reply.res_ids,
             "username" : userinfo.name,
             "userprofileid" : userinfo.profile_res_id,
             "pos":reply.pos,
-            "datetime":reply.addtime,
+            "datetime":reply.addtime.strftime("%Y-%m-%d %H:%M:%S"),
+            "followed":Follow.get(uid, reply.uid),
         })
         max_rid = max(max_rid, reply.rid)
         min_rid = reply.rid if min_rid < 0 else min(min_rid, reply.rid)
@@ -349,7 +404,8 @@ def reply_add(uid, pid, content, res_type, res_content, pos):
         if new_rid == ERROR_NO_POST:
             return 404, id_msg(-1, "request post not found")
         return 500, id_msg(-1, "inserting failed")
-    return 200, jsonify({"rid":new_rid, "message":"success"})
+    message_reply(uid, pid, content)
+    return 200, jsonify({"rid":new_rid, "message":"success", "id":0})
 
 
 def reply_remove(uid, rid):
@@ -369,7 +425,7 @@ def follow_add(follower, follows):
     status = Follow.add(follower, follows)
     if not status:
         return 500, id_msg(-1, "server internal error")
-    return 200, id_msg(0, "success")
+    return 200, id_msg(1, "success")
 
 
 def follow_remove(follower, follows):
@@ -384,11 +440,20 @@ def follow_remove(follower, follows):
 def follow_get_list(follower):
     if Users.get_by_id(follower) is None:
         return 404, id_msg(-2, "No such user")
-    follows_list = Follow.get_list(follower)
+    follows_list = Follow.get_follow_list(follower)
     if follows_list is None:
         return 500, id_msg(-1, "server internal error")
+    follow_ret_list = []
+    for follow in follows_list:
+        user = Users.get_by_id(follow)
+        if user is None: continue
+        follow_ret_list.append({
+            'uid':user.uid,
+            'username':user.name,
+            "imgid":user.profile_res_id,
+        })
     return 200, jsonify({
-        'list':follows_list,
+        'list':follow_ret_list,
         'id':0,
         'message':'success',
     })
@@ -397,7 +462,7 @@ def follow_get_list(follower):
 def file_upload(file):
     filename = str(file.filename)
     suffix = filename.split('.')[-1].lower()
-    if suffix not in config.ALLOWED_EXTENTIONS:
+    if (suffix not in config.ALLOWED_EXTENTIONS):
         return 400, jsonify({
             'id' : -1,
             'message' : 'file extention name not allowed',
@@ -440,3 +505,36 @@ def file_get_path(res_id:int):
     if os.path.exists(file_path):
         return file_path
     return None
+
+
+def message_count_unread(uid:int):
+    if Users.get_by_id(uid) is None:
+        return 404, id_msg(-1, "Request user invalid")
+    n_unread = Message.count_unread(uid)
+    return 200, jsonify({
+        'message':'success',
+        'count':n_unread
+    })
+
+def message_get_list(uid:int, n:int, start=None):
+    if Users.get_by_id(uid) is None:
+        return 404, id_msg(-1, "Request user invalid")
+    msg_list = Message.get_list(uid, n, start)
+    if type(msg_list) is int:
+        return 500, id_msg(-1, "Error query database")
+    Message.mark_read([_.msg_id for _ in msg_list])
+    msg_ret_list = []
+    for msg in msg_list:
+        msg_ret_list.append({
+            'msg_id':msg.msg_id,
+            'sender_id':msg.sender,
+            'title':msg.title,
+            'content':msg.abstract,
+            'pid':msg.linkID,
+            'addtime':msg.addtime,
+        })
+    return 200, jsonify({
+        'message':'success',
+        'count': len(msg_ret_list),
+        'list':msg_ret_list
+    })

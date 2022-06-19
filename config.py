@@ -1,7 +1,8 @@
 from email.mime import base
 import os
 
-DEBUG = True
+DEBUG = False
+DEBUG_ERROR = False
 
 basedir = os.getcwd()
 
@@ -9,7 +10,7 @@ DB_URI = 'sqlite:///' + os.path.join(basedir, 'data.sqlite')
 
 SQLALCHEMY_DATABASE_URI = DB_URI
 SQLALCHEMY_TRACK_MODIFICATIONS = False
-SQLALCHEMY_ECHO = DEBUG
+SQLALCHEMY_ECHO = False
 
 JSON_AS_ASCII = False
 
@@ -28,7 +29,7 @@ MAIL_USE_SSL = True
 
 # Path to save user uploaded files
 UPLOAD_PATH  = os.path.join(basedir, "userdata")
-ALLOWED_EXTENTIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'aac', 'mp3', 'wav', 'flac', 'mp4', 'mov', 'avi', 'mpeg']
+ALLOWED_EXTENTIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'aac', 'mp3', 'wav', 'flac', 'mp4', 'mov', 'avi', 'mpeg', 'amr']
 FILE_TYPE = {
     'jpg':'IMG',
     'jpeg':'IMG',
@@ -38,6 +39,7 @@ FILE_TYPE = {
     'aac':'AUD',
     'mp3':'AUD',
     'flac':'AUD',
+    'amr':'AUD',
     'mp4':'VID',
     'avi':'VID',
     'mpeg':'VID',

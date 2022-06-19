@@ -76,6 +76,7 @@ def Login():
 @auth.login_required
 def UserInfo():
     uid = request.args.get("uid", g.uid)
+    logD(f"uid = {uid}")
     code, data = user_getinfo(uid)
     return make_response(data, code)
 
@@ -150,6 +151,39 @@ def GetNPost():
     if(n > config.MAX_POST_REQUEST):
         data['message'] = f"max request posts limited to {config.MAX_POST_REQUEST}"
     return make_response(data,code)
+
+
+@app.route("/api/search", methods=['GET'])
+@auth.login_required
+def SearchPost():
+    main_pattern = request.args.get('all')
+    title_pattern = request.args.get('title')
+    content_pattern = request.args.get('content')
+    user_pattern = request.args.get('user')
+    ban_text = request.args.get('no_text','False')
+    ban_image = request.args.get('no_image','False')
+    ban_video = request.args.get('no_video','False')
+    ban_audio = request.args.get('no_audio','False')
+
+    def to_bool(s:str)->bool:
+        s = s.lower()
+        if s == "true": return True
+        if s == "false": return False
+        raise Exception("ErrorStrToBool")
+
+    try:
+        ban_text, ban_image, ban_video, ban_audio = to_bool(ban_text), to_bool(ban_image), to_bool(ban_video), to_bool(ban_audio)
+    except:
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
+
+    res_list = []
+    if not ban_text: res_list.append(None)
+    if not ban_image: res_list.append(RES_IMG)
+    if not ban_video: res_list.append(RES_VID)
+    if not ban_audio: res_list.append(RES_AUD)
+    
+    code, data = post_search(g.uid, main_pattern, title_pattern, content_pattern, user_pattern, res_list)
+    return make_response(data, code)
 
 
 @app.route("/api/getuserpost", methods = ['GET'])
@@ -242,7 +276,9 @@ def NewReply():
     res_content = request.form.get('res_content')
     pos = request.form.get('pos')
     try:
-        res_type = int(res_type)
+        if res_type is not None:
+            res_type = int(res_type)
+        pid = int(pid)
     except:
         return make_response(jsonify({"message":"wrong parameter"}), 400)
     if None in [pid, content]:
@@ -369,3 +405,23 @@ def Download():
     if file_path is None:
         make_response(id_msg(-1, "File not exists"), 404)
     return send_file(file_path, as_attachment=True, max_age = 691200)
+
+@app.route("/api/countunread", methods=['GET'])
+@auth.login_required
+def CountUnread():
+    code, data = message_count_unread(g.uid)
+    return make_response(data, code)
+
+@app.route("/api/getmessage", methods=['GET'])
+@auth.login_required
+def GetMessage():
+    n = request.args.get('n', 20)
+    start = request.args.get('start')
+    try:
+        n = int(n)
+        if start  is not None:
+            start = int(start)
+    except:
+        return make_response(jsonify({"message":"wrong parameter"}), 400)
+    code, data = message_get_list(g.uid, n, start)
+    return make_response(data, code)

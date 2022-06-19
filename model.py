@@ -1,3 +1,4 @@
+from email import message
 from flask import g
 from exts import db
 from log import *
@@ -153,6 +154,19 @@ class Users(db.Model):
             return ERROR_PASSWD
         return usr.uid
 
+
+    @staticmethod
+    def search(uid, name_pattern):
+        user_list = []
+        try:
+            ban_list = Ban.get_list(uid)
+            user_list = db.session.query(Users).filter(and_(Users.uid.notin_(ban_list), Users.name.like(f"%{name_pattern}%")))
+            user_list = [_.uid for _ in user_list]
+        except Exception as e:
+            logDE(e)
+            return ERROR_QUERY_DB
+        return user_list
+
     
     @staticmethod
     def update_profile(uid:int, res_id:int) -> bool:
@@ -268,7 +282,7 @@ class Posts(db.Model):
                 temp = temp.order_by(Posts.dianzan.desc())
 
             if type_filter == POST_FILTER_FOLLOW:
-                temp = temp.filter(Posts.uid.in_(Follow.get_list(uid)))
+                temp = temp.filter(Posts.uid.in_(Follow.get_follow_list(uid)))
 
             if type_filter >= 0:
                 temp = temp.filter(Posts.uid == type_filter)
@@ -324,6 +338,35 @@ class Posts(db.Model):
         
         return if_zaned
 
+    
+    @staticmethod
+    def search(uid, main_pattern = None, title_pattern = None, content_pattern = None, user_list = None, res_type_list = None):
+        post_list = []
+        try:
+            ban_list = Ban.get_list(uid)
+            query = db.session.query(Posts).filter(Posts.uid.notin_(ban_list))
+            if main_pattern is not None:
+                query = query.filter(or_(Posts.title.like(f"%{main_pattern}%"), Posts.content.like(f"%{main_pattern}%")))
+            if title_pattern is not None:
+                query = query.filter(Posts.title.like(f"%{title_pattern}%"))
+            if content_pattern is not None:
+                query = query.filter(Posts.content.like(f"%{content_pattern}%"))
+            if user_list is not None:
+                query = query.filter(Posts.uid.in_(user_list))
+            if res_type_list is not None:
+                if None in res_type_list:
+                    query = query.filter(or_(Posts.res_type.in_(res_type_list), Posts.res_type == None))
+                else:
+                    query = query.filter(Posts.res_type.in_(res_type_list))
+            logD("res_list="+str(res_type_list))
+            post_list = query.order_by(Posts.pid.desc()).all()
+        except Exception as e:
+            logDE(e)
+            return ERROR_QUERY_DB
+        return post_list
+            
+
+
 
     @staticmethod 
     def remove_by_pid(uid:int, pid:int):
@@ -336,6 +379,15 @@ class Posts(db.Model):
                 return ERROR_UNAUTHORIZED
             post.delete()
             db.session.commit()
+            try:
+                db.session.query(Replies).filter(Replies.pid == pid).all().delete()
+                db.session.commit()
+            except: pass
+            try:
+                db.session.query(Dianzans).filter(Dianzans.pid == pid).all().delete()
+                db.session.commit()
+            except: pass
+            
         except Exception as e:
             logDE(e)
             return ERROR_DB_EXECUTE
@@ -526,6 +578,18 @@ class Follow(db.Model):
 
 
     @staticmethod
+    def get(follower:int, follows:int) -> bool:
+        try:
+            follow_record = db.session.query(Follow).filter(and_(Follow.follower == follower, Follow.follows == follows)).one()
+            if follow_record is None:
+                return False
+            return True
+        except Exception as e:
+            logDE(e)
+            return False
+
+
+    @staticmethod
     def remove(follower:int, follows:int):
         try:
             db.session.query(Follow).filter(and_(Follow.follower == follower, Follow.follows == follows)).delete()
@@ -537,11 +601,22 @@ class Follow(db.Model):
 
 
     @staticmethod
-    def get_list(follower:int):
+    def get_follow_list(follower:int):
         follows_list = []
         try:
             ret = db.session.query(Follow).filter(and_(Follow.follower == follower)).all()
             follows_list = [r.follows for r in ret]
+        except Exception as e:
+            logDE(e)
+            return None
+        return follows_list
+    
+    @staticmethod
+    def get_follower_list(followe:int):
+        follows_list = []
+        try:
+            ret = db.session.query(Follow).filter(and_(Follow.follows == followe)).all()
+            follows_list = [r.follower for r in ret]
         except Exception as e:
             logDE(e)
             return None
@@ -598,13 +673,13 @@ class Ban(db.Model):
     dontlook  = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
 
     def __init__(self, user, dontlook):
-        self.follower, self.dontlook = user, dontlook
+        self.user, self.dontlook = user, dontlook
 
     @staticmethod
     def add(user:int, dontlook:int) -> bool:
         try:
-            follow = Ban(user,dontlook)
-            db.session.add(follow)
+            ban = Ban(user,dontlook)
+            db.session.add(ban)
             db.session.commit()
         except Exception as e:
             logDE(e)
@@ -624,12 +699,24 @@ class Ban(db.Model):
 
 
     @staticmethod
+    def get(user:int, dontlook:int) -> bool:
+        try:
+            ban_record = db.session.query(Ban).filter(and_(Ban.user == user, Ban.dontlook == dontlook)).one()
+            if ban_record is None:
+                return False
+            return True
+        except Exception as e:
+            logDE(e)
+            return False
+
+
+    @staticmethod
     def get_list(user:int):
         ban_list = []
         if(user < 0): return ban_list
         try:
             ret = db.session.query(Ban).filter(and_(Ban.user == user)).all()
-            ban_list = [r.follows for r in ret]
+            ban_list = [r.dontlook for r in ret]
         except Exception as e:
             logDE(e)
             return None
@@ -641,16 +728,69 @@ class Ban(db.Model):
 ###########
 class Message(db.Model):
     __tablename__ = "message"
-    reciever = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
-    sender = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'), primary_key = True)
+    msg_id = db.Column(db.Integer,  primary_key = True, autoincrement=True)
+    reciever = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='CASCADE'))
+    sender = db.Column(db.Integer, db.ForeignKey('users.uid', ondelete='SET NULL'))
     title = db.Column(db.String(80))
     abstract = db.Column(db.String(80))
     linkID = db.Column(db.Integer)
     read = db.Column(db.Boolean)
+    addtime = db.Column(db.DateTime())
 
     def __init__(self, reciever, sender, title, abstract, linkedID):
         self.reciever, self.sender, self.title, self.abstract, self.linkID = reciever, sender, title, abstract, linkedID
         self.read = False
+        self.addtime = datetime.datetime.now()
+    
+    def add(reciever:int, sender:int, title:str, abstract:str, linkID:int):
+        logD("[O0o0o0oooooOOO)O)o0o0o0OOOOOO]"+f"add:recv={reciever}, sender={sender}, title={title}")
+        try:
+            if Ban.get(reciever, sender):
+                return False
+            message = Message(reciever, sender, title, abstract, linkID)
+            db.session.add(message)
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        logD("[O0o0o0oooooOOO)O)o0o0o0OOOOOO]"+"success")
+        return True
+    
+    def count_unread(uid:int)->int:
+        n_message = 0
+        try:
+            n_message = int(db.session.query(func.count(Message.reciever))\
+                .filter(and_(Message.reciever == uid, Message.read == False)).one()[0])
+        except Exception as e:
+            logDE(e)
+            return 0
+        return n_message
+    
+    def get_list(uid:int, n:int, start:int):
+        message_list = []
+        try:
+            temp = db.session.query(Message).filter(Message.reciever == uid)
+            if start is not None:
+                temp = temp.filter(Message.msg_id.__le__(start))
+            temp = temp.order_by(Message.msg_id.desc()).limit(n)
+            message_list = temp.all()
+        except Exception as e:
+            logDE(e)
+            return ERROR_QUERY_DB
+        return message_list
+    
+    def mark_read(msg_id_list):
+        try:
+            db.session.query(Message).filter(Message.msg_id.in_(msg_id_list)).update({'read':True})
+            db.session.commit()
+        except Exception as e:
+            logDE(e)
+            return False
+        return True
+            
+
+
+
 
     
 
